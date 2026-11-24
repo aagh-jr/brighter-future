@@ -1,0 +1,16 @@
+node_modules
+.next
+.env*
+!.env.example
+*.tsbuildinfo
+
+*.csv
+*.tsv
+*.xlsx
+*.pdf
+*.zip
+*.pem
+*.key
+*.log
+.DS_Store
+next-env.d.ts
