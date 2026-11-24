@@ -36,3 +36,13 @@ dialog{box-sizing:border-box;position:fixed;inset:0;margin:auto;width:min(480px,
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 
 .shell main{min-width:0}.chart,.donut{overflow:hidden}.card-activity{margin-top:14px}.sidebar nav{max-width:100%}
+.goal-products{list-style:none;margin:2px 0 9px;padding:0;display:grid;gap:4px;font-size:.84rem;color:var(--muted)}.goal-products li{display:flex;justify-content:space-between;gap:10px}.goal-products li span:first-child{display:flex;align-items:center;gap:6px;min-width:0;overflow-wrap:anywhere}
+.goal-group{display:grid;gap:8px;margin:0;padding:11px 12px;border:1px solid var(--line);border-radius:9px;min-width:0}.goal-group legend{padding:0 4px;font-size:.9rem;font-weight:600}.goal-group>button{justify-self:start}.goal-group .form-note{margin:0;font-size:.82rem}
+.goal-product-row{display:grid;grid-template-columns:minmax(0,1fr) 104px auto;gap:6px;align-items:center}.goal-product-row input{width:100%}
+.goal-products li{align-items:center}.goal-product-name{flex:1;min-width:0;overflow-wrap:anywhere;color:var(--ink)}.goal-product-name a{color:inherit;text-decoration:underline;text-decoration-color:#c9c6bb;text-underline-offset:2px}
+.goal-thumb{position:relative;display:grid;place-items:center;flex:none;width:34px;height:34px;border-radius:7px;background:#eeede7;color:var(--muted);overflow:hidden}.goal-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:white}.goal-thumb.large{width:58px;height:58px}
+.goal-status{margin:7px 0 0;font-size:.87rem;font-weight:600}.goal-status.ready{color:#30633d}
+.goal-paste{display:flex;align-items:center;gap:6px;padding-left:10px;border:1px dashed #cfcdc3;border-radius:7px;background:white;color:var(--muted)}.goal-paste input{flex:1;border:0;background:transparent}
+.goal-drop.over{border-color:#8fa188;background:#f1f4ee}
+.goal-product-card{display:flex;gap:9px;align-items:start;padding-top:8px;border-top:1px solid var(--line)}.goal-product-fields{flex:1;display:grid;gap:6px;min-width:0}.goal-product-fields>input{width:100%}.form-note.warn{color:#963820}
+.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}

@@ -1,11 +1,11 @@
 "use client";
 
 import { cloneElement, useEffect, useId, useRef, useState, type FormEvent, type ReactElement, type ReactNode } from "react";
-import { ArrowDownLeft, ArrowUpRight, BarChart3, ChevronDown, CircleHelp, CreditCard, Grid2X2, Landmark, List, Plus, Search, ShieldCheck, Target, Upload, Wallet, X } from "lucide-react";
+import { ArrowDownLeft, ArrowUpRight, BarChart3, ChevronDown, CircleHelp, CreditCard, Grid2X2, Landmark, Link2, List, Loader2, Package, Plus, Search, ShieldCheck, Target, Trash2, Upload, Wallet, X } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import Papa from "papaparse";
 import { Button } from "@/components/ui/button";
-import { accountTypes, categories, cents, empty, liability, money, monthsThrough, periodLabel, stats, sum, today, validDate, type Account, type Budget, type Goal, type Ledger, type Transaction } from "@/lib/finance";
+import { affordableCount, accountTypes, categories, cents, empty, goalSaved, goalTarget, goalVaults, liability, money, monthsThrough, periodLabel, stats, sum, today, validDate, type Account, type Budget, type Goal, type GoalProduct, type Ledger, type Transaction } from "@/lib/finance";
 import { cloud, loadWorkspace, saveWorkspace } from "@/lib/storage";
 import { openBankLink, refreshBanks, ResumeBankLink } from "@/components/bank-import";
 import { mergeBankSnapshots, type BankSnapshot } from "@/lib/plaid-import";
@@ -20,6 +20,8 @@ const palette = ["#ed7142","#202422","#8d9e81","#eab39e","#bec4b5","#bbb5aa","#c
 const amountInput = (value?:number) => value === undefined ? undefined : (value / 100).toFixed(2);
 const signedMoney = (n:number) => n < 0 ? "−" + money(-n) : "+" + money(n);
 const glyph = {size:17,strokeWidth:1.7};
+type DraftProduct = {id:string; name:string; price:string; url:string; image?:string; status?:"loading"|"error"; message?:string};
+const blankProduct = ():DraftProduct => ({id:crypto.randomUUID(),name:"",price:"",url:""});
 function Field({ label, children }: {label:string;children:ReactElement<{"aria-labelledby"?: string}>}) {
   const labelId = useId();
   return <label className="field"><span id={labelId}>{label}</span>{cloneElement(children, {"aria-labelledby": labelId})}</label>;
@@ -50,6 +52,7 @@ export default function Page() {
   const [periodOnly,setPeriodOnly] = useState(false);
   const [csvRows,setCsvRows] = useState<Transaction[]>([]);
   const [confirmDelete,setConfirmDelete] = useState(false);
+  const [draftProducts,setDraftProducts] = useState<DraftProduct[]>([]);
   const dialog = useRef<HTMLDialogElement>(null);
   const fileSequence = useRef(0);
   const writeLock = useRef(false);
@@ -95,6 +98,7 @@ export default function Page() {
   function open(next: Editor) {
     fileSequence.current++;
     setEditor(next);setError("");setCsvRows([]);setConfirmDelete(false);
+    setDraftProducts(next.kind==="goal" ? (next.row?.products??[]).map(p=>({id:p.id,name:p.name,price:amountInput(p.price)!,url:p.url??"",image:p.image})) : []);
   }
   function close() { if (!writeLock.current) {fileSequence.current++;setEditor(undefined);} }
   async function commit(next: Ledger, message: string) {
@@ -151,9 +155,20 @@ export default function Page() {
           break;
         }
         case "goal": {
-          const target=cents(value("amount")), saved=cents(value("saved"));
-          if(!name || !target) throw Error("Enter a goal name and a target above zero.");
-          const row={id:editor.row?.id??crypto.randomUUID(),name,target,saved};
+          const products:GoalProduct[]=draftProducts.filter(p=>p.name.trim()||p.price.trim()||p.url.trim()).map((p,i)=>{
+            if(!p.name.trim()) throw Error("Name product "+(i+1)+" or remove it.");
+            let price:number;
+            try {price=cents(p.price);} catch {throw Error("Enter a price for "+p.name.trim()+".");}
+            if(!price) throw Error("Enter a price above zero for "+p.name.trim()+".");
+            let url:string|undefined;
+            if(p.url.trim()) { try {url=new URL(p.url.trim()).href;} catch {throw Error("Check the link for "+p.name.trim()+".");} }
+            return {id:p.id,name:p.name.trim().slice(0,100),price,...(url?{url}:{}),...(p.image?{image:p.image}:{})};
+          });
+          const accountIds=data.getAll("accounts").map(String).filter(id=>ledger.accounts.some(a=>a.id===id&&!liability(a)));
+          const target=products.length?0:cents(value("amount")), saved=accountIds.length?0:cents(value("saved")||"0");
+          if(!name) throw Error("Enter a goal name.");
+          if(!products.length && !target) throw Error("Add a product or enter a target above zero.");
+          const row:Goal={id:editor.row?.id??crypto.randomUUID(),name,target,saved,...(products.length?{products}:{}),...(accountIds.length?{accountIds}:{})};
           await commit({...ledger,goals:[...ledger.goals.filter(g=>g.id!==row.id),row]},"Savings goal saved.");
           break;
         }
@@ -234,7 +249,7 @@ export default function Page() {
   const a = editor?.kind==="account" ? editor.row : undefined;
   const b = editor?.kind==="budget" ? editor.row : undefined;
   const g = editor?.kind==="goal" ? editor.row : undefined;
-  const editorTitle = editor?.kind==="settings" ? "Workspace" : editor?.kind==="import" ? "Import transactions" : (edit?"Edit ":"Add ")+(editor?.kind==="goal"?"savings goal":editor?.kind??"");
+  const editorTitle = editor?.kind==="settings" ? "Workspace" : editor?.kind==="import" ? "Import transactions" : editor?.kind==="goal" ? (edit?"Edit goal":"New goal") : (edit?"Edit ":"Add ")+(editor?.kind??"");
 
   function table(rows:Transaction[], compact=false) {
     return <div className="table-wrap"><table><thead><tr><th>Description</th><th>Category</th><th>Date</th><th className="number">Amount</th>{!compact&&<th><span className="sr-only">Actions</span></th>}</tr></thead>
@@ -242,13 +257,74 @@ export default function Page() {
     {!rows.length&&<p className="empty">No transactions match this view.</p>}</div>;
   }
   function goals() {
-    return <div className="item-list">{ledger.goals.length?ledger.goals.map(g=><div className="progress-item" key={g.id}><div className="item-line"><strong>{g.name}</strong><Button variant="ghost" onClick={()=>open({kind:"goal",row:g})}>Edit</Button></div><Progress value={g.saved} max={g.target}/><div className="item-line"><span>{money(g.saved)} of {money(g.target)}</span><span className="mono">{Math.floor(g.saved/g.target*100)}%</span></div></div>):<p className="empty">Add a savings goal to track your progress.</p>}</div>;
+    return <div className="item-list">{ledger.goals.length?ledger.goals.map(g=>{
+      const target=goalTarget(g), saved=goalSaved(g,ledger.accounts), vaults=goalVaults(g,ledger.accounts);
+      const products=g.products??[], canBuy=affordableCount(products,saved), ready=saved>=target;
+      const status=ready?(products.length>1?"Enough for all "+products.length+" products":"Enough to buy it"):products.length>1?(canBuy?"Can buy up to "+canBuy+" of "+products.length+" products":"Not enough for any product yet")+" · "+money(target-saved)+" left":money(target-saved)+" left";
+      return <div className="progress-item" key={g.id}><div className="item-line"><strong>{g.name}</strong><Button variant="ghost" onClick={()=>open({kind:"goal",row:g})}>Edit</Button></div>
+        {products.length?<ul className="goal-products">{[...products].sort((x,y)=>x.price-y.price).map(p=><li key={p.id}>
+          <span className="goal-thumb">{p.image?<img src={p.image} alt="" referrerPolicy="no-referrer" loading="lazy" onError={e=>{e.currentTarget.style.display="none";}}/>:null}<Package size={15} strokeWidth={1.7}/></span>
+          <span className="goal-product-name">{p.url?<a href={p.url} target="_blank" rel="noopener noreferrer">{p.name}</a>:p.name}</span>
+          <span className="mono">{money(p.price)}</span></li>)}</ul>:null}
+        <Progress value={saved} max={target}/>
+        <p className={"goal-status"+(ready?" ready":"")}>{status}</p>
+        <div className="item-line"><span>{money(saved)} of {money(target)}{vaults.length?" · in "+vaults.map(a=>a.name).join(", "):""}</span><span className="mono">{Math.min(100,Math.floor(saved/target*100))}%</span></div></div>;
+    }):<p className="empty">Create a goal, paste links to the products you’re saving for, and pick the account that holds the money.</p>}</div>;
   }
   function budgets() {
     return <div className="item-list">{ledger.budgets.length?ledger.budgets.map(b=>{
       const spent=-sum(monthRows.filter(t=>t.amount<0&&t.category===b.category).map(t=>t.amount));
       return <div className="progress-item" key={b.id}><div className="item-line"><strong>{b.category}</strong><Button variant="ghost" onClick={()=>open({kind:"budget",row:b})}>Edit</Button></div><Progress value={spent} max={b.limit}/><div className="item-line"><span>{money(spent)} of {money(b.limit)} spent</span><span className="mono">{money(Math.abs(b.limit-spent))} {spent>b.limit?"over":"left"}</span></div></div>;
     }):<p className="empty">Add a category budget to see what remains each month.</p>}</div>;
+  }
+
+  async function lookupProduct(id:string, link:string) {
+    const url=link.trim();
+    if(!url) return;
+    setDraftProducts(rows=>rows.map(r=>r.id===id?{...r,url,status:"loading",message:undefined}:r));
+    try {
+      const response=await fetch("/api/product-preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url})});
+      const found=await response.json() as {name?:string;image?:string;price?:string;error?:string};
+      if(!response.ok) throw Error(found.error??"Couldn’t read that page.");
+      setDraftProducts(rows=>rows.map(r=>r.id!==id?r:{...r,name:r.name||found.name||"",price:r.price||found.price||"",image:found.image??r.image,status:undefined,
+        message:found.price?undefined:"No price on that page. Enter it yourself."}));
+    } catch(e) {
+      setDraftProducts(rows=>rows.map(r=>r.id===id?{...r,status:"error",message:e instanceof Error?e.message:"Couldn’t read that page."}:r));
+    }
+  }
+  function goalFields() {
+    const vaultOptions=ledger.accounts.filter(a=>!liability(a));
+    const productTotal=sum(draftProducts.map(p=>{try {return cents(p.price);} catch {return 0;}}));
+    const setProduct=(id:string,patch:Partial<DraftProduct>)=>setDraftProducts(rows=>rows.map(r=>r.id===id?{...r,...patch}:r));
+    const addFromLink=(link:string)=>{const row={...blankProduct(),url:link.trim()};setDraftProducts(rows=>[...rows,row]);void lookupProduct(row.id,link);};
+    const droppedLink=(e:React.DragEvent)=>(e.dataTransfer.getData("text/uri-list").split("\n").find(l=>l&&!l.startsWith("#"))||e.dataTransfer.getData("text/plain")).trim();
+    return <>
+      <fieldset className="goal-group goal-drop" onDragOver={e=>{if(e.dataTransfer.types.includes("text/uri-list")||e.dataTransfer.types.includes("text/plain")){e.preventDefault();e.currentTarget.classList.add("over");}}} onDragLeave={e=>e.currentTarget.classList.remove("over")}
+        onDrop={e=>{e.currentTarget.classList.remove("over");const link=droppedLink(e);if(/^https?:\/\//i.test(link)){e.preventDefault();addFromLink(link);}}}><legend>Products</legend>
+        <label className="goal-paste"><Link2 size={16}/><input aria-label="Paste a product link" placeholder="Paste or drop a store link" onPaste={e=>{const link=e.clipboardData.getData("text").trim();if(/^https?:\/\//i.test(link)){e.preventDefault();addFromLink(link);}}}
+          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();const link=e.currentTarget.value.trim();if(link){addFromLink(link);e.currentTarget.value="";}}}}/></label>
+        {draftProducts.map((p,i)=><div className="goal-product-card" key={p.id}>
+          <span className="goal-thumb large">{p.status==="loading"?<Loader2 className="spin" size={18}/>:p.image?<img src={p.image} alt="" referrerPolicy="no-referrer" onError={()=>setProduct(p.id,{image:undefined})}/>:<Package size={18} strokeWidth={1.7}/>}</span>
+          <div className="goal-product-fields">
+            <div className="goal-product-row">
+              <input aria-label={"Product "+(i+1)+" name"} placeholder={p.status==="loading"?"Reading the store page…":"Product name"} maxLength={100} value={p.name} onChange={e=>setProduct(p.id,{name:e.target.value})}/>
+              <input aria-label={"Product "+(i+1)+" price (USD)"} placeholder="0.00" inputMode="decimal" value={p.price} onChange={e=>setProduct(p.id,{price:e.target.value})}/>
+              <Button variant="ghost" aria-label={"Remove product "+(i+1)} onClick={()=>setDraftProducts(rows=>rows.filter(r=>r.id!==p.id))}><Trash2 size={16}/></Button>
+            </div>
+            <input aria-label={"Product "+(i+1)+" link"} placeholder="Store link (optional)" value={p.url} onChange={e=>setProduct(p.id,{url:e.target.value,message:undefined})} onBlur={e=>{if(e.target.value.trim()&&!p.image&&p.status!=="loading")void lookupProduct(p.id,e.target.value);}}/>
+            {p.message&&<p className={"form-note"+(p.status==="error"?" warn":"")}>{p.message}</p>}
+          </div>
+        </div>)}
+        <Button variant="outline" onClick={()=>setDraftProducts(rows=>[...rows,blankProduct()])}><Plus size={16}/> Add product manually</Button>
+        {draftProducts.length>0&&<p className="form-note">Target is the product total: {money(productTotal)}.</p>}
+      </fieldset>
+      {!draftProducts.length&&<Field label="Target (USD)"><input name="amount" inputMode="decimal" defaultValue={amountInput(g?.target||undefined)} placeholder="0.00"/></Field>}
+      <fieldset className="goal-group"><legend>Where the money is held</legend>
+        {vaultOptions.length?vaultOptions.map(acc=><label className="checkbox" key={acc.id}><input type="checkbox" name="accounts" value={acc.id} defaultChecked={g?.accountIds?.includes(acc.id)}/> {acc.name} <span className="form-note">{acc.type} · {money(acc.balance)}</span></label>):<p className="form-note">Add a checking, savings or investment account to link it as this goal’s vault.</p>}
+        <p className="form-note">Linked accounts count toward this goal automatically. Leave all unchecked to track the amount yourself.</p>
+      </fieldset>
+      <Field label="Saved so far, if no account is linked (USD)"><input name="saved" inputMode="decimal" defaultValue={amountInput(g?.saved??0)}/></Field>
+    </>;
   }
 
   return <div className="shell">
@@ -272,7 +348,7 @@ export default function Page() {
             }}><Upload size={16}/> Import Accounts</Button>
             {owner&&<Button variant="outline" disabled={loading||busy} onClick={()=>void refreshBanks(bankCallbacks)}>Refresh accounts</Button>}
           </>}
-          <Button disabled={loading||busy} onClick={()=>open(view==="Credit Cards"?{kind:"account",row:{id:"",name:"",type:"Credit card",balance:0}}:{kind:view==="Accounts"?"account":view==="Budgets"?"budget":view==="Savings goals"?"goal":"transaction"})}><Plus size={17}/>{view==="Credit Cards"?"Add card":view==="Accounts"?"Add account":view==="Budgets"?"Add budget":view==="Savings goals"?"Add goal":"Add transaction"}</Button>
+          <Button disabled={loading||busy} onClick={()=>open(view==="Credit Cards"?{kind:"account",row:{id:"",name:"",type:"Credit card",balance:0}}:{kind:view==="Accounts"?"account":view==="Budgets"?"budget":view==="Savings goals"?"goal":"transaction"})}><Plus size={17}/>{view==="Credit Cards"?"Add card":view==="Accounts"?"Add account":view==="Budgets"?"Add budget":view==="Savings goals"?"New goal":"Add transaction"}</Button>
         </div>
       </header>
       <div className="sr-only" role="status">{notice}</div>
@@ -310,7 +386,7 @@ export default function Page() {
           <select aria-label="Direction filter" value={direction} onChange={e=>setDirection(e.target.value)}><option value="">All types</option><option value="income">Income</option><option value="expense">Expense</option></select>
           <label className="checkbox"><input type="checkbox" checked={periodOnly} onChange={e=>setPeriodOnly(e.target.checked)}/> Selected month only</label></div>{table(visible)}</Section>
         :view==="Budgets"?<Section title="Category budgets" detail={periodLabel(month,true)}>{budgets()}</Section>
-        :view==="Savings goals"?<Section title="Goal progress" detail="Update saved amounts as you set money aside.">{goals()}</Section>
+        :view==="Savings goals"?<Section title="Goal progress" detail="Goals linked to an account track its balance. Others use the saved amount you enter." action={<Button variant="outline" disabled={loading||busy} onClick={()=>open({kind:"goal"})}><Plus size={16}/> New goal</Button>}>{goals()}</Section>
         :view==="Credit Cards"?<>
           <Section title="Card balances" detail={money(sum(creditCards.map(a=>a.balance)))+" total owed"}>
             <div className="item-list accounts-mini">{creditCards.length?creditCards.map(card=><div className="account-mini" key={card.id}><span className="tx-icon"><CreditCard {...glyph}/></span><div><strong>{card.name}</strong><small>Recorded balance</small></div><strong className="mono">{money(card.balance)}</strong><Button variant="outline" aria-label={"Edit "+card.name} onClick={()=>open({kind:"account",row:card})}>Edit</Button></div>):<p className="empty">Add a credit card to track its balance.</p>}</div>
@@ -330,10 +406,9 @@ export default function Page() {
         {editor.kind==="transaction"&&<><div className="form-grid"><Field label="Date"><input type="date" name="date" defaultValue={t?.date??today()} required/></Field><Field label="Type"><select name="direction" defaultValue={t&&t.amount>0?"income":"expense"}><option value="expense">Expense</option><option value="income">Income</option></select></Field></div><Field label="Account"><select name="account" required defaultValue={t?.accountId??""}><option value="" disabled>Choose an account</option>{ledger.accounts.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></Field>{!ledger.accounts.length&&<p><Button variant="outline" onClick={()=>open({kind:"account"})}>Add an account first</Button></p>}</>}
         {(editor.kind==="transaction"||editor.kind==="budget")&&<Field label="Category"><select name="category" defaultValue={t?.category??b?.category??"Other"}>{categories.filter(c=>editor.kind!=="budget"||c!=="Income"&&c!=="Transfer").map(c=><option key={c}>{c}</option>)}</select></Field>}
         {editor.kind==="account"&&<Field label="Account type"><select name="type" defaultValue={a?.type}>{accountTypes.map(c=><option key={c}>{c}</option>)}</select></Field>}
-        <Field label={editor.kind==="goal"?"Target (USD)":editor.kind==="budget"?"Monthly limit (USD)":editor.kind==="account"?"Current balance (USD)":"Amount (USD)"}><input name="amount" inputMode="decimal" defaultValue={amountInput(t?Math.abs(t.amount):a?.balance??b?.limit??g?.target)} placeholder="0.00" required/></Field>
-        {editor.kind==="goal"&&<Field label="Already saved (USD)"><input name="saved" inputMode="decimal" defaultValue={amountInput(g?.saved??0)} required/></Field>}
+        {editor.kind==="goal"?goalFields():<Field label={editor.kind==="budget"?"Monthly limit (USD)":editor.kind==="account"?"Current balance (USD)":"Amount (USD)"}><input name="amount" inputMode="decimal" defaultValue={amountInput(t?Math.abs(t.amount):a?.balance??b?.limit)} placeholder="0.00" required/></Field>}
         {editor.kind==="transaction"&&<p className="form-note">Transactions update reports. Update account balances separately.</p>}
-        <div className="dialog-actions">{t&&<Button className="delete" variant="ghost" disabled={busy} onClick={()=>{if(confirmDelete)void commit({...ledger,transactions:ledger.transactions.filter(r=>r.id!==t.id),hiddenBankTransactions:t.bankItemId?[...(ledger.hiddenBankTransactions??[]),t.id]:ledger.hiddenBankTransactions},"Transaction deleted.");else setConfirmDelete(true);}}>{confirmDelete?"Confirm delete":"Delete"}</Button>}<Button variant="outline" disabled={busy} onClick={close}>Cancel</Button><Button type="submit" disabled={busy||loading}>{busy?"Saving…":"Save changes"}</Button></div>
+        <div className="dialog-actions">{t&&<Button className="delete" variant="ghost" disabled={busy} onClick={()=>{if(confirmDelete)void commit({...ledger,transactions:ledger.transactions.filter(r=>r.id!==t.id),hiddenBankTransactions:t.bankItemId?[...(ledger.hiddenBankTransactions??[]),t.id]:ledger.hiddenBankTransactions},"Transaction deleted.");else setConfirmDelete(true);}}>{confirmDelete?"Confirm delete":"Delete"}</Button>}{g?.id&&<Button className="delete" variant="ghost" disabled={busy} onClick={()=>{if(confirmDelete)void commit({...ledger,goals:ledger.goals.filter(r=>r.id!==g.id)},"Goal deleted.");else setConfirmDelete(true);}}>{confirmDelete?"Confirm delete":"Delete"}</Button>}<Button variant="outline" disabled={busy} onClick={close}>Cancel</Button><Button type="submit" disabled={busy||loading||draftProducts.some(p=>p.status==="loading")}>{busy?"Saving…":"Save changes"}</Button></div>
       </form>}
       {error&&<p className="error" role="alert">{error}</p>}</>}
     </dialog>
